@@ -4,7 +4,7 @@ from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Uploa
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.support import require_identity, resolve_image_base_url
+from api.support import extract_bearer_token, require_identity, resolve_image_base_url
 from services.content_filter import check_request, request_text
 from services.log_service import LoggedCall
 from services.protocol import (
@@ -133,7 +133,7 @@ def create_router() -> APIRouter:
         request_preview = request_text(payload.get("prompt"), payload.get("messages"))
         call = LoggedCall(identity, "/v1/chat/completions", model, "文本生成", request_text=request_preview)
         await filter_or_log(call, request_preview)
-        payload["access_token"] = authorization
+        payload["access_token"] = extract_bearer_token(authorization)
         return await call.run(openai_v1_chat_complete.handle, payload)
 
     @router.post("/v1/responses")
@@ -144,7 +144,7 @@ def create_router() -> APIRouter:
         request_preview = request_text(payload.get("input"), payload.get("instructions"))
         call = LoggedCall(identity, "/v1/responses", model, "Responses", request_text=request_preview)
         await filter_or_log(call, request_preview)
-        payload["access_token"] = authorization
+        payload["access_token"] = extract_bearer_token(authorization)
         return await call.run(openai_v1_response.handle, payload)
 
     @router.post("/v1/messages")
@@ -160,7 +160,7 @@ def create_router() -> APIRouter:
         request_preview = request_text(payload.get("system"), payload.get("messages"), payload.get("tools"))
         call = LoggedCall(identity, "/v1/messages", model, "Messages", request_text=request_preview)
         await filter_or_log(call, request_preview)
-        payload["access_token"] = identity # Use identity which includes Bearer prefix if needed
+        payload["access_token"] = extract_bearer_token(authorization) or identity.get("id", "")
         return await call.run(anthropic_v1_messages.handle, payload, sse="anthropic")
 
     return router
