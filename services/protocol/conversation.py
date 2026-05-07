@@ -259,7 +259,7 @@ def message_text(content: Any) -> str:
     return ""
 
 
-def normalize_messages(messages: object, system: Any = None, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None) -> list[dict[str, Any]]:
+def normalize_messages(messages: object, system: Any = None, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None, access_token: str = "") -> list[dict[str, Any]]:
     normalized = []
 
     # Inject global system prompt and tools documentation
