@@ -350,8 +350,9 @@ def normalize_messages(messages: object, system: Any = None, tools: list[dict[st
                     normalized[i]["content"] = existing + _XML_WRAP_HINT
                 break
 
-    # Truncate oversized payload to prevent HTTP 413 errors
-    normalized = _truncate_messages(normalized)
+    # Log the total payload size for debugging 413 errors
+    payload_bytes = len(json.dumps(normalized, ensure_ascii=False, default=str).encode("utf-8"))
+    logger.info(f"Sending conversation request: {payload_bytes} bytes")
     return normalized
 
 
