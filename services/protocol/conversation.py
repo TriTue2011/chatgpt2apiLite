@@ -258,6 +258,75 @@ def message_text(content: Any) -> str:
         return "".join(parts)
     return ""
 
+def _truncate_messages(messages: list[dict[str, Any]], max_bytes: int) -> list[dict[str, Any]]:
+    """Drop oldest non-system messages and truncate system messages until under the size limit.
+    """
+    def _get_bytes(msgs: list[dict[str, Any]]) -> int:
+        return len(json.dumps(msgs, ensure_ascii=False, default=str).encode("utf-8"))
+
+    payload_bytes = _get_bytes(messages)
+    if payload_bytes <= max_bytes:
+        return messages
+
+    logger.warning({
+        "event": "truncate_messages_start",
+        "payload_bytes": payload_bytes,
+        "max_bytes": max_bytes,
+        "total_messages": len(messages),
+    })
+
+    # 1. Separate system messages from the rest
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    other_msgs = [m for m in messages if m.get("role") != "system"]
+
+    # 2. Drop oldest non-system messages until under limit or only system messages left
+    dropped = 0
+    while other_msgs and _get_bytes(system_msgs + other_msgs) > max_bytes:
+        other_msgs.pop(0)
+        dropped += 1
+
+    # 3. If still over limit, aggressively truncate system messages from last to first
+    if _get_bytes(system_msgs + other_msgs) > max_bytes:
+        for i in range(len(system_msgs) - 1, -1, -1):
+            msg = system_msgs[i]
+            if not isinstance(msg.get("content"), str):
+                continue
+            
+            # While this specific message can still be truncated and we are over limit
+            while len(msg["content"]) > 500 and _get_bytes(system_msgs + other_msgs) > max_bytes:
+                content = msg["content"]
+                current_bytes = _get_bytes(system_msgs + other_msgs)
+                excess = current_bytes - max_bytes
+                # Cut roughly the excess plus some buffer, but don't go below 500 chars
+                reduction = max(excess, 1000)
+                new_len = max(500, len(content) - reduction)
+                msg["content"] = content[:new_len] + "\n\n[Truncated]"
+                if new_len <= 500:
+                    break
+
+    # 4. Last resort: truncate the very last message if still over
+    combined = system_msgs + other_msgs
+    while combined and _get_bytes(combined) > max_bytes:
+        last_msg = combined[-1]
+        if isinstance(last_msg.get("content"), str) and len(last_msg["content"]) > 100:
+            last_msg["content"] = last_msg["content"][:len(last_msg["content"]) // 2] + "\n\n[Aggressively Truncated]"
+        else:
+            # If we really can't truncate anymore, just drop the last one
+            if len(combined) > 1:
+                combined.pop()
+            else:
+                break
+
+    result = combined
+    result_bytes = _get_bytes(result)
+    logger.warning({
+        "event": "truncate_messages_done",
+        "dropped": dropped,
+        "remaining_messages": len(result),
+        "result_bytes": result_bytes,
+    })
+    return result
+
 
 def normalize_messages(messages: object, system: Any = None, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None, access_token: str = "") -> list[dict[str, Any]]:
     normalized = []
