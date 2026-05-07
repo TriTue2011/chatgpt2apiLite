@@ -253,11 +253,11 @@ def chat_image_args(body: dict[str, Any]) -> tuple[str, str, int, list[tuple[byt
     return model, prompt, parse_image_count(body.get("n")), images
 
 
-def text_chat_parts(body: dict[str, Any]) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]] | None, Any]:
+def text_chat_parts(body: dict[str, Any], access_token: str = "") -> tuple[str, list[dict[str, Any]], list[dict[str, Any]] | None, Any]:
     model = str(body.get("model") or "auto").strip() or "auto"
     tools = body.get("tools")
     tool_choice = body.get("tool_choice")
-    messages = normalize_messages(chat_messages_from_body(body), tools=tools, tool_choice=tool_choice)
+    messages = normalize_messages(chat_messages_from_body(body), tools=tools, tool_choice=tool_choice, access_token=access_token)
     return model, messages, tools, tool_choice
 
 
@@ -322,14 +322,14 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     if body.get("stream"):
         if is_image_chat_request(body):
             return image_chat_events(body)
-        model, messages, tools, tool_choice = text_chat_parts(body)
+        model, messages, tools, tool_choice = text_chat_parts(body, access_token=body.get("access_token", ""))
         request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
         return stream_text_chat_completion(text_backend(), request)
     
     if is_image_chat_request(body):
         return image_chat_response(body)
         
-    model, messages, tools, tool_choice = text_chat_parts(body)
+    model, messages, tools, tool_choice = text_chat_parts(body, access_token=body.get("access_token", ""))
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
     content, tool_calls = collect_chat_content_and_tools(stream_conversation_events(text_backend(), request))
     

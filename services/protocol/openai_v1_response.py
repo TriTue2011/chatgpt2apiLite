@@ -145,7 +145,7 @@ def stream_text_response(backend, body: dict[str, Any]) -> Iterator[dict[str, An
     yield {"type": "response.output_item.added", "output_index": 0, "item": text_output_item("", item_id, "in_progress")}
     
     from services.protocol.conversation import normalize_messages, stream_conversation_events, extract_and_remove_tool_calls
-    normalized = normalize_messages(messages, tools=tools)
+    normalized = normalize_messages(messages, tools=tools, access_token=body.get("access_token", ""))
     request = ConversationRequest(model=model, messages=normalized, tools=tools, tool_choice=tool_choice)
     
     # Buffer if tools present to extract tool calls cleanly

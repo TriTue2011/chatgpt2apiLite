@@ -133,6 +133,7 @@ def create_router() -> APIRouter:
         request_preview = request_text(payload.get("prompt"), payload.get("messages"))
         call = LoggedCall(identity, "/v1/chat/completions", model, "文本生成", request_text=request_preview)
         await filter_or_log(call, request_preview)
+        payload["access_token"] = authorization
         return await call.run(openai_v1_chat_complete.handle, payload)
 
     @router.post("/v1/responses")
@@ -143,6 +144,7 @@ def create_router() -> APIRouter:
         request_preview = request_text(payload.get("input"), payload.get("instructions"))
         call = LoggedCall(identity, "/v1/responses", model, "Responses", request_text=request_preview)
         await filter_or_log(call, request_preview)
+        payload["access_token"] = authorization
         return await call.run(openai_v1_response.handle, payload)
 
     @router.post("/v1/messages")
@@ -158,6 +160,7 @@ def create_router() -> APIRouter:
         request_preview = request_text(payload.get("system"), payload.get("messages"), payload.get("tools"))
         call = LoggedCall(identity, "/v1/messages", model, "Messages", request_text=request_preview)
         await filter_or_log(call, request_preview)
+        payload["access_token"] = identity # Use identity which includes Bearer prefix if needed
         return await call.run(anthropic_v1_messages.handle, payload, sse="anthropic")
 
     return router

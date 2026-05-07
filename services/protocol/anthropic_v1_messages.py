@@ -109,9 +109,10 @@ def preprocess_payload(payload: dict[str, object], text_mapper: Callable[[str], 
 
 def message_request(body: dict[str, Any]) -> MessageRequest:
     payload = preprocess_payload(dict(body))
+    access_token = body.get("access_token") or account_service.get_text_access_token()
     return MessageRequest(
-        backend=OpenAIBackendAPI(access_token=account_service.get_text_access_token()),
-        messages=normalize_messages(payload.get("messages"), payload.get("system")),
+        backend=OpenAIBackendAPI(access_token=access_token),
+        messages=normalize_messages(payload.get("messages"), payload.get("system"), access_token=access_token),
         model=str(payload.get("model") or "auto").strip() or "auto",
         tools=payload.get("tools"),
     )
