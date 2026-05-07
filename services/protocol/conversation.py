@@ -260,8 +260,8 @@ def message_text(content: Any) -> str:
 
 
 # Maximum payload size in bytes before triggering truncation.
-# ChatGPT backend limit is ~100 KB; we use 80 KB to be safe.
-_MAX_PAYLOAD_BYTES = 80_000
+# Empirical testing shows that some accounts/backends reject requests over ~30 KB.
+_MAX_PAYLOAD_BYTES = 24_000
 
 
 def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
