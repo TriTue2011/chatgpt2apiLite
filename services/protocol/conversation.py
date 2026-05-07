@@ -265,19 +265,14 @@ _MAX_PAYLOAD_BYTES = 80_000
 
 
 def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop oldest non-system messages when the serialized payload exceeds the size limit.
+    """Drop oldest non-system messages and truncate system messages until under the size limit.
 
     This prevents HTTP 413 (Request Entity Too Large) errors from the ChatGPT backend.
-    Home Assistant accumulates the entire conversation history (including tool call results)
-    across multiple iterations, which can easily exceed the ~256 KB limit.
-
-    Strategy:
-    1. Keep all system messages (they define behavior and tools).
-    2. Drop oldest non-system messages until under the threshold.
-    3. If still over limit, truncate the last user message content as a last resort.
     """
-    payload = json.dumps(messages, ensure_ascii=False, default=str)
-    payload_bytes = len(payload.encode("utf-8"))
+    def _get_bytes(msgs: list[dict[str, Any]]) -> int:
+        return len(json.dumps(msgs, ensure_ascii=False, default=str).encode("utf-8"))
+
+    payload_bytes = _get_bytes(messages)
     if payload_bytes <= _MAX_PAYLOAD_BYTES:
         return messages
 
@@ -288,45 +283,50 @@ def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "total_messages": len(messages),
     })
 
-    # Separate system messages from the rest
+    # 1. Separate system messages from the rest
     system_msgs = [m for m in messages if m.get("role") == "system"]
     other_msgs = [m for m in messages if m.get("role") != "system"]
 
-    # Drop oldest non-system messages until under limit
+    # 2. Drop oldest non-system messages until under limit or only system messages left
     dropped = 0
-    while other_msgs:
-        test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
-        if len(test_payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
-            break
+    while other_msgs and _get_bytes(system_msgs + other_msgs) > _MAX_PAYLOAD_BYTES:
         other_msgs.pop(0)
         dropped += 1
 
-    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+    # 3. If still over limit, aggressively truncate system messages from last to first
+    if _get_bytes(system_msgs + other_msgs) > _MAX_PAYLOAD_BYTES:
+        for i in range(len(system_msgs) - 1, -1, -1):
+            msg = system_msgs[i]
+            if not isinstance(msg.get("content"), str):
+                continue
+            
+            # While this specific message can still be truncated and we are over limit
+            while len(msg["content"]) > 500 and _get_bytes(system_msgs + other_msgs) > _MAX_PAYLOAD_BYTES:
+                content = msg["content"]
+                current_bytes = _get_bytes(system_msgs + other_msgs)
+                excess = current_bytes - _MAX_PAYLOAD_BYTES
+                # Cut roughly the excess plus some buffer, but don't go below 500 chars
+                reduction = max(excess, 1000)
+                new_len = max(500, len(content) - reduction)
+                msg["content"] = content[:new_len] + "\n\n[Truncated]"
+                if new_len <= 500:
+                    break
 
-    # If still over limit, truncate the last system message (typically the HA entity list)
-    if len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
-        if system_msgs:
-            last_sys = system_msgs[-1]
-            if isinstance(last_sys.get("content"), str):
-                content = last_sys["content"]
-                excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
-                allowed_len = max(500, len(content) - excess - 200)
-                if len(content) > allowed_len:
-                    last_sys["content"] = content[:allowed_len] + "\n\n[System prompt truncated due to size limits]"
-                    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+    # 4. Last resort: truncate the very last message if still over (e.g. if everything is already at 500 chars)
+    combined = system_msgs + other_msgs
+    while combined and _get_bytes(combined) > _MAX_PAYLOAD_BYTES:
+        last_msg = combined[-1]
+        if isinstance(last_msg.get("content"), str) and len(last_msg["content"]) > 100:
+            last_msg["content"] = last_msg["content"][:len(last_msg["content"]) // 2] + "\n\n[Aggressively Truncated]"
+        else:
+            # If we really can't truncate anymore, just drop the last one
+            if len(combined) > 1:
+                combined.pop()
+            else:
+                break
 
-    # If still over limit (shouldn't happen if system msgs alone are small), truncate last user content
-    if other_msgs and len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
-        last_user = other_msgs[-1]
-        if last_user.get("role") == "user" and isinstance(last_user.get("content"), str):
-            content = last_user["content"]
-            excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
-            allowed_len = max(500, len(content) - excess - 200)
-            if len(content) > allowed_len:
-                last_user["content"] = content[:allowed_len] + "\n\n[Content truncated due to size limits]"
-
-    result = system_msgs + other_msgs
-    result_bytes = len(json.dumps(result, ensure_ascii=False, default=str).encode("utf-8"))
+    result = combined
+    result_bytes = _get_bytes(result)
     logger.warning({
         "event": "truncate_messages_done",
         "dropped": dropped,
