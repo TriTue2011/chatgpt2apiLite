@@ -350,9 +350,18 @@ def normalize_messages(messages: object, system: Any = None, tools: list[dict[st
                     normalized[i]["content"] = existing + _XML_WRAP_HINT
                 break
 
-    # Log the total payload size for debugging 413 errors
+    # Intelligent truncation based on account plan
+    account = account_service.get_account(access_token) if access_token else {}
+    plan_type = str(account.get("type") or "free").lower()
+    
+    # Free accounts are strictly limited to ~30KB, Paid accounts can handle ~120KB or more
+    max_bytes = 120_000 if plan_type not in {"free", ""} else 24_000
+    
+    normalized = _truncate_messages(normalized, max_bytes)
+
+    # Log the total payload size for debugging
     payload_bytes = len(json.dumps(normalized, ensure_ascii=False, default=str).encode("utf-8"))
-    logger.info(f"Sending conversation request: {payload_bytes} bytes")
+    logger.info(f"Sending conversation request: {payload_bytes} bytes (plan: {plan_type})")
     return normalized
 
 
@@ -738,7 +747,7 @@ def conversation_events(
     tools: list[dict[str, Any]] | None = None,
     tool_choice: Any = None,
 ) -> Iterator[dict[str, Any]]:
-    normalized = normalize_messages(messages or ([{"role": "user", "content": prompt}] if prompt else []), tools=tools)
+    normalized = normalize_messages(messages or ([{"role": "user", "content": prompt}] if prompt else []), tools=tools, access_token=backend.access_token)
     image_model = str(model or "").strip() in IMAGE_MODELS
     history_text = "" if image_model else assistant_history_text(normalized)
     history_messages = [] if image_model else assistant_history_messages(normalized)
