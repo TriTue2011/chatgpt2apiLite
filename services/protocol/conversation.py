@@ -260,8 +260,8 @@ def message_text(content: Any) -> str:
 
 
 # Maximum payload size in bytes before triggering truncation.
-# ChatGPT backend limit is ~256 KB; we leave ~76 KB headroom.
-_MAX_PAYLOAD_BYTES = 180_000
+# ChatGPT backend limit is ~256 KB; we leave ~136 KB headroom.
+_MAX_PAYLOAD_BYTES = 120_000
 
 
 def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -277,19 +277,29 @@ def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     3. If still over limit, truncate the last user message content as a last resort.
     """
     payload = json.dumps(messages, ensure_ascii=False, default=str)
-    if len(payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
+    payload_bytes = len(payload.encode("utf-8"))
+    if payload_bytes <= _MAX_PAYLOAD_BYTES:
         return messages
+
+    logger.warning({
+        "event": "truncate_messages_start",
+        "payload_bytes": payload_bytes,
+        "max_bytes": _MAX_PAYLOAD_BYTES,
+        "total_messages": len(messages),
+    })
 
     # Separate system messages from the rest
     system_msgs = [m for m in messages if m.get("role") == "system"]
     other_msgs = [m for m in messages if m.get("role") != "system"]
 
     # Drop oldest non-system messages until under limit
+    dropped = 0
     while other_msgs:
         test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
         if len(test_payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
             break
         other_msgs.pop(0)
+        dropped += 1
 
     # If still over limit (shouldn't happen if system msgs alone are small), truncate last user content
     if other_msgs:
@@ -302,6 +312,13 @@ def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 last_user["content"] = content[:max_len] + "\n\n[Content truncated due to size limits]"
 
     result = system_msgs + other_msgs
+    result_bytes = len(json.dumps(result, ensure_ascii=False, default=str).encode("utf-8"))
+    logger.warning({
+        "event": "truncate_messages_done",
+        "dropped": dropped,
+        "remaining_messages": len(result),
+        "result_bytes": result_bytes,
+    })
     return result
 
 
