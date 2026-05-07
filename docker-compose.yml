@@ -1,32 +1,41 @@
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile.lite
+
+  # ================================================================
+  # CÁCH 1: Dùng image có sẵn từ GitHub Container Registry (Khuyên dùng)
+  # Image được build tự động bởi GitHub Actions khi push lên master
+  # ================================================================
+  chatgpt-multi:
+    image: ghcr.io/tritue2011/chatgpt2apilite:latest
     container_name: chatgpt2api-lite
     restart: unless-stopped
     ports:
-      - "3030:80"
+      - "${PORT:-3030}:80"
     volumes:
-      - ./data:/app/data
+      - /opt/chatgpt2api-lite/data:/app/data
     environment:
-      # === REQUIRED: Authentication key ===
-      # Used by hass_local_openai_llm to authenticate API calls
-      - CHATGPT2API_AUTH_KEY=sk-your-secret-key
+      - CHATGPT2API_AUTH_KEY=${AUTH_KEY}
+      - CHATGPT_TOKEN_1=${TOKEN_1}
+      - CHATGPT_TOKEN_2=${TOKEN_2:-}
+      - CHATGPT_TOKEN_3=${TOKEN_3:-}
+      - CHATGPT_TOKEN_4=${TOKEN_4:-}
 
-      # === REQUIRED: ChatGPT tokens (at least one) ===
-      # Multiple accounts supported via numbered env vars
-      - CHATGPT_TOKEN_1=your_chatgpt_token_here
-      # - CHATGPT_TOKEN_2=another_token
-      # - CHATGPT_TOKEN_3=third_token
-
-      # === OPTIONAL: Storage backend ===
-      # Supported: json (default), sqlite, postgres, git
-      - STORAGE_BACKEND=json
-
-      # === OPTIONAL: Database URL (for sqlite/postgres) ===
-      # - DATABASE_URL=sqlite:///app/data/accounts.db
-      # - DATABASE_URL=postgresql://user:password@host:5432/dbname
-
-      # === OPTIONAL: Global system prompt ===
-      # - GLOBAL_SYSTEM_PROMPT=You are a helpful assistant.
+  # ================================================================
+  # CÁCH 2: Tự build từ source (nếu muốn chỉnh sửa code)
+  # Chạy: docker compose -f docker-compose.yml build chatgpt-multi-build
+  # ================================================================
+  chatgpt-multi-build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chatgpt2api-lite
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3030}:80"
+    volumes:
+      - /opt/chatgpt2api-lite/data:/app/data
+    environment:
+      - CHATGPT2API_AUTH_KEY=${AUTH_KEY}
+      - CHATGPT_TOKEN_1=${TOKEN_1}
+      - CHATGPT_TOKEN_2=${TOKEN_2:-}
+      - CHATGPT_TOKEN_3=${TOKEN_3:-}
+      - CHATGPT_TOKEN_4=${TOKEN_4:-}
