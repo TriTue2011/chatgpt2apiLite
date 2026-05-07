@@ -259,7 +259,7 @@ def message_text(content: Any) -> str:
     return ""
 
 def _truncate_messages(messages: list[dict[str, Any]], max_bytes: int) -> list[dict[str, Any]]:
-    """Drop oldest non-system messages and truncate system messages until under the size limit.
+    """Drop oldest non-system messages first. Preserve system/tool definitions if possible.
     """
     def _get_bytes(msgs: list[dict[str, Any]]) -> int:
         return len(json.dumps(msgs, ensure_ascii=False, default=str).encode("utf-8"))
@@ -275,49 +275,49 @@ def _truncate_messages(messages: list[dict[str, Any]], max_bytes: int) -> list[d
         "total_messages": len(messages),
     })
 
-    # 1. Separate system messages from the rest
+    # 1. Split into categories
     system_msgs = [m for m in messages if m.get("role") == "system"]
     other_msgs = [m for m in messages if m.get("role") != "system"]
 
-    # 2. Drop oldest non-system messages until under limit or only system messages left
+    # 2. Drop non-system messages from the beginning (oldest first)
+    # BUT ALWAYS KEEP THE VERY LAST USER MESSAGE (the current request)
     dropped = 0
-    while other_msgs and _get_bytes(system_msgs + other_msgs) > max_bytes:
+    while len(other_msgs) > 1 and _get_bytes(system_msgs + other_msgs) > max_bytes:
         other_msgs.pop(0)
         dropped += 1
 
-    # 3. If still over limit, aggressively truncate system messages from last to first
+    # 3. If still over, we must truncate the system message (which contains tool defs)
+    # This is a last resort as it might break tool calling
     if _get_bytes(system_msgs + other_msgs) > max_bytes:
-        for i in range(len(system_msgs) - 1, -1, -1):
+        for i in range(len(system_msgs)):
             msg = system_msgs[i]
             if not isinstance(msg.get("content"), str):
                 continue
             
-            # While this specific message can still be truncated and we are over limit
-            while len(msg["content"]) > 500 and _get_bytes(system_msgs + other_msgs) > max_bytes:
+            # If the system message is huge, we truncate it but keep the beginning 
+            # (where global instructions usually are) and maybe some tools.
+            while len(msg["content"]) > 2000 and _get_bytes(system_msgs + other_msgs) > max_bytes:
                 content = msg["content"]
-                current_bytes = _get_bytes(system_msgs + other_msgs)
-                excess = current_bytes - max_bytes
-                # Cut roughly the excess plus some buffer, but don't go below 500 chars
-                reduction = max(excess, 1000)
-                new_len = max(500, len(content) - reduction)
-                msg["content"] = content[:new_len] + "\n\n[Truncated]"
-                if new_len <= 500:
+                # Keep more of the system prompt than before (e.g. 2000 chars min)
+                new_len = max(2000, len(content) - 2000)
+                msg["content"] = content[:new_len] + "\n\n[System Prompt Truncated due to size limits]"
+                if new_len <= 2000:
                     break
 
-    # 4. Last resort: truncate the very last message if still over
-    combined = system_msgs + other_msgs
-    while combined and _get_bytes(combined) > max_bytes:
-        last_msg = combined[-1]
-        if isinstance(last_msg.get("content"), str) and len(last_msg["content"]) > 100:
-            last_msg["content"] = last_msg["content"][:len(last_msg["content"]) // 2] + "\n\n[Aggressively Truncated]"
+    # 4. Final safety check: if STILL over, we have to drop everything except the last user message
+    if _get_bytes(system_msgs + other_msgs) > max_bytes:
+        # If even system + last_user is too big, try dropping all system prompts
+        if _get_bytes(other_msgs[-1:]) <= max_bytes:
+             result = other_msgs[-1:]
         else:
-            # If we really can't truncate anymore, just drop the last one
-            if len(combined) > 1:
-                combined.pop()
-            else:
-                break
+             # Last resort: truncate the last user message
+             last_msg = dict(other_msgs[-1])
+             if isinstance(last_msg.get("content"), str):
+                 last_msg["content"] = last_msg["content"][:max_bytes // 2] + "... [Truncated]"
+             result = [last_msg]
+    else:
+        result = system_msgs + other_msgs
 
-    result = combined
     result_bytes = _get_bytes(result)
     logger.warning({
         "event": "truncate_messages_done",
