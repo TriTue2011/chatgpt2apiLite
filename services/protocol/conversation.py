@@ -260,8 +260,8 @@ def message_text(content: Any) -> str:
 
 
 # Maximum payload size in bytes before triggering truncation.
-# ChatGPT backend limit is ~256 KB; we leave ~136 KB headroom.
-_MAX_PAYLOAD_BYTES = 120_000
+# ChatGPT backend limit is ~100 KB; we use 80 KB to be safe.
+_MAX_PAYLOAD_BYTES = 80_000
 
 
 def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -301,15 +301,29 @@ def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         other_msgs.pop(0)
         dropped += 1
 
+    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+
+    # If still over limit, truncate the last system message (typically the HA entity list)
+    if len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+        if system_msgs:
+            last_sys = system_msgs[-1]
+            if isinstance(last_sys.get("content"), str):
+                content = last_sys["content"]
+                excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
+                allowed_len = max(500, len(content) - excess - 200)
+                if len(content) > allowed_len:
+                    last_sys["content"] = content[:allowed_len] + "\n\n[System prompt truncated due to size limits]"
+                    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+
     # If still over limit (shouldn't happen if system msgs alone are small), truncate last user content
-    if other_msgs:
-        test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
-        if len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
-            last_user = other_msgs[-1]
-            if last_user.get("role") == "user" and isinstance(last_user.get("content"), str):
-                content = last_user["content"]
-                max_len = len(content) // 2
-                last_user["content"] = content[:max_len] + "\n\n[Content truncated due to size limits]"
+    if other_msgs and len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+        last_user = other_msgs[-1]
+        if last_user.get("role") == "user" and isinstance(last_user.get("content"), str):
+            content = last_user["content"]
+            excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
+            allowed_len = max(500, len(content) - excess - 200)
+            if len(content) > allowed_len:
+                last_user["content"] = content[:allowed_len] + "\n\n[Content truncated due to size limits]"
 
     result = system_msgs + other_msgs
     result_bytes = len(json.dumps(result, ensure_ascii=False, default=str).encode("utf-8"))
