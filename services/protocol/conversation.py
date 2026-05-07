@@ -294,15 +294,14 @@ def _truncate_messages(messages: list[dict[str, Any]], max_bytes: int) -> list[d
             if not isinstance(msg.get("content"), str):
                 continue
             
-            # If the system message is huge, we truncate it but keep the beginning 
-            # (where global instructions usually are) and maybe some tools.
-            while len(msg["content"]) > 2000 and _get_bytes(system_msgs + other_msgs) > max_bytes:
+            # If the system message is huge, we truncate it.
+            # CRITICAL: Tools are usually at the END, instructions at the BEGINNING.
+            # So we should cut from the MIDDLE.
+            if len(msg["content"]) > 4000 and _get_bytes(system_msgs + other_msgs) > max_bytes:
                 content = msg["content"]
-                # Keep more of the system prompt than before (e.g. 2000 chars min)
-                new_len = max(2000, len(content) - 2000)
-                msg["content"] = content[:new_len] + "\n\n[System Prompt Truncated due to size limits]"
-                if new_len <= 2000:
-                    break
+                # Keep first 2000 chars and last 2000 chars
+                # This preserves instructions and tool definitions
+                msg["content"] = content[:2000] + "\n\n[... Middle of System Prompt Truncated ...]\n\n" + content[-2000:]
 
     # 4. Final safety check: if STILL over, we have to drop everything except the last user message
     if _get_bytes(system_msgs + other_msgs) > max_bytes:
