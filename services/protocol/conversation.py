@@ -351,8 +351,10 @@ def normalize_messages(messages: object, system: Any = None, tools: list[dict[st
                 break
 
     # Intelligent truncation based on account plan
-    account = account_service.get_account(access_token) if access_token else {}
-    plan_type = str(account.get("type") or "free").lower()
+    # Clean the token (remove Bearer prefix if present)
+    clean_token = access_token.replace("Bearer ", "").strip() if access_token else ""
+    account = account_service.get_account(clean_token) if clean_token else {}
+    plan_type = str(account.get("type") or "free").lower() if account else "free"
     
     # Free accounts are strictly limited to ~30KB, Paid accounts can handle ~120KB or more
     max_bytes = 120_000 if plan_type not in {"free", ""} else 24_000
