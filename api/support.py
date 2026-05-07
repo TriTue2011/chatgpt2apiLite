@@ -10,7 +10,6 @@ from services.auth_service import auth_service
 from services.config import config
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-WEB_DIST_DIR = BASE_DIR / "web_dist"
 
 
 def extract_bearer_token(authorization: str | None) -> str:
@@ -23,7 +22,7 @@ def extract_bearer_token(authorization: str | None) -> str:
 def _legacy_admin_identity(token: str) -> dict[str, object] | None:
     auth_key = str(config.auth_key or "").strip()
     if auth_key and token == auth_key:
-        return {"id": "admin", "name": "管理员", "role": "admin"}
+        return {"id": "admin", "name": "Admin", "role": "admin"}
     return None
 
 
@@ -31,7 +30,7 @@ def require_identity(authorization: str | None) -> dict[str, object]:
     token = extract_bearer_token(authorization)
     identity = _legacy_admin_identity(token) or auth_service.authenticate(token)
     if identity is None:
-        raise HTTPException(status_code=401, detail={"error": "密钥无效或已失效，请重新登录"})
+        raise HTTPException(status_code=401, detail={"error": "Invalid or expired API key"})
     return identity
 
 
@@ -42,7 +41,7 @@ def require_auth_key(authorization: str | None) -> None:
 def require_admin(authorization: str | None) -> dict[str, object]:
     identity = require_identity(authorization)
     if identity.get("role") != "admin":
-        raise HTTPException(status_code=403, detail={"error": "需要管理员权限才能执行这个操作"})
+        raise HTTPException(status_code=403, detail={"error": "Admin privileges required"})
     return identity
 
 
@@ -57,30 +56,7 @@ def raise_image_quota_error(exc: Exception) -> None:
     raise HTTPException(status_code=502, detail={"error": message}) from exc
 
 
-def sanitize_cpa_pool(pool: dict | None) -> dict | None:
-    if not isinstance(pool, dict):
-        return None
-    return {key: value for key, value in pool.items() if key != "secret_key"}
-
-
-def sanitize_cpa_pools(pools: list[dict]) -> list[dict]:
-    return [sanitized for pool in pools if (sanitized := sanitize_cpa_pool(pool)) is not None]
-
-
-def sanitize_sub2api_server(server: dict | None) -> dict | None:
-    if not isinstance(server, dict):
-        return None
-    sanitized = {key: value for key, value in server.items() if key not in {"password", "api_key"}}
-    sanitized["has_api_key"] = bool(str(server.get("api_key") or "").strip())
-    return sanitized
-
-
-def sanitize_sub2api_servers(servers: list[dict]) -> list[dict]:
-    return [sanitized for server in servers if (sanitized := sanitize_sub2api_server(server)) is not None]
-
-
 def start_limited_account_watcher(stop_event: Event) -> Thread:
-    # Đảm bảo interval tối thiểu là 1 phút (60s) để tránh vòng lặp vô hạn gây tốn CPU
     refresh_min = config.refresh_account_interval_minute
     interval_seconds = max(60, refresh_min * 60) if refresh_min is not None else 300
 
@@ -98,23 +74,3 @@ def start_limited_account_watcher(stop_event: Event) -> Thread:
     thread = Thread(target=worker, name="limited-account-watcher", daemon=True)
     thread.start()
     return thread
-
-
-def resolve_web_asset(requested_path: str) -> Path | None:
-    if not WEB_DIST_DIR.exists():
-        return None
-    clean_path = requested_path.strip("/")
-    base_dir = WEB_DIST_DIR.resolve()
-    candidates = [base_dir / "index.html"] if not clean_path else [
-        base_dir / Path(clean_path),
-        base_dir / clean_path / "index.html",
-        base_dir / f"{clean_path}.html",
-    ]
-    for candidate in candidates:
-        try:
-            candidate.resolve().relative_to(base_dir)
-        except ValueError:
-            continue
-        if candidate.is_file():
-            return candidate
-    return None

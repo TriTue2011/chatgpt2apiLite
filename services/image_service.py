@@ -10,7 +10,6 @@ from fastapi.responses import FileResponse
 from PIL import Image, ImageOps
 
 from services.config import config
-from services.image_tags_service import load_tags, remove_tags
 
 THUMBNAIL_SIZE = (320, 320)
 
@@ -139,13 +138,12 @@ def _image_items(start_date: str = "", end_date: str = "") -> list[dict[str, obj
 def list_images(base_url: str, start_date: str = "", end_date: str = "") -> dict[str, object]:
     config.cleanup_old_images()
     cleanup_image_thumbnails()
-    all_tags = load_tags()
     items = [
         {
             **item,
             "url": f"{base_url.rstrip('/')}/images/{item['path']}",
             "thumbnail_url": thumbnail_url(base_url, str(item["path"])),
-            "tags": all_tags.get(str(item["path"]), []),
+            "tags": [],
         }
         for item in _image_items(start_date, end_date)
     ]
@@ -170,7 +168,6 @@ def delete_images(paths: list[str] | None = None, start_date: str = "", end_date
             for thumbnail in (_thumbnail_path(item), config.image_thumbnails_dir / _safe_relative_path(item)):
                 if thumbnail.is_file():
                     thumbnail.unlink()
-            remove_tags(item)
             removed += 1
     _cleanup_empty_dirs(root)
     _cleanup_empty_dirs(config.image_thumbnails_dir)
